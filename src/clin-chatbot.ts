@@ -213,13 +213,19 @@ async function startClinSession() {
         const isLoggedOut = statusCode === DisconnectReason.loggedOut
         lastConnectionError = `code=${statusCode}, msg=${errorMessage}`
 
-        console.log(`[Clin] ⚠️ Conexão fechada (code=${statusCode}, loggedOut=${isLoggedOut}, error=${errorMessage})`)
+        // 408 = QR refs attempts ended (QR expirou sem escanear ou sessão inválida)
+        // 401 = Unauthorized (credenciais inválidas)
+        // 440 = Session replaced
+        const isSessionInvalid = statusCode === 408 || statusCode === 401 || statusCode === 440
 
-        if (isLoggedOut) {
-          // ÚNICO caso onde a sessão realmente morre:
-          // o usuário desconectou do celular (ou /clin/disconnect)
+        console.log(`[Clin] ⚠️ Conexão fechada (code=${statusCode}, loggedOut=${isLoggedOut}, sessionInvalid=${isSessionInvalid}, error=${errorMessage})`)
+
+        if (isLoggedOut || isSessionInvalid) {
+          // Sessão morreu: loggedOut pelo celular, QR expirou, ou auth inválido
+          // Limpar tudo e aguardar novo /clin/connect
           clinStatus = 'disconnected'
           clinPhoneNumber = null
+          reconnectAttempt = 0
 
           if (fs.existsSync(AUTH_DIR)) {
             fs.rmSync(AUTH_DIR, { recursive: true, force: true })
@@ -238,9 +244,19 @@ async function startClinSession() {
             } catch { /* best effort */ }
           }
 
-          console.log(`[Clin] 🔴 Sessão encerrada pelo celular. Escaneie novamente via /clin/qr.`)
+          console.log(`[Clin] 🔴 Sessão encerrada (${isLoggedOut ? 'loggedOut' : 'sessão inválida'}). Escaneie novamente via /clin/qr.`)
+        } else if (reconnectAttempt >= 10) {
+          // Limite de reconexão atingido — parar para evitar loop infinito
+          clinStatus = 'disconnected'
+          reconnectAttempt = 0
+          
+          if (fs.existsSync(AUTH_DIR)) {
+            fs.rmSync(AUTH_DIR, { recursive: true, force: true })
+          }
+          
+          console.log(`[Clin] 🔴 Limite de reconexão atingido. Limpando auth. Reconecte via /clin/connect.`)
         } else {
-          // QUALQUER outro erro: reconecta SEMPRE, infinitamente
+          // Erro temporário: reconecta com backoff
           reconnectAttempt++
           // Backoff: 2s, 4s, 8s, 16s, 30s (max 30s entre tentativas)
           const delay = Math.min(2000 * Math.pow(2, reconnectAttempt - 1), 30_000)
