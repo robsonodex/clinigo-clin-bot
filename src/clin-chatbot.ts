@@ -42,6 +42,10 @@ let lastConnectionError: string | null = null // Debug: último erro
 // Histórico de conversas in-memory
 const conversations = new Map<string, { role: string; content: string }[]>()
 
+// Timers de inatividade por sessão (5 minutos sem resposta → follow-up)
+const inactivityTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 minutos
+
 // ========== SUPABASE ==========
 function getSupabase() {
   const url = process.env.SUPABASE_URL
@@ -71,6 +75,40 @@ function stopKeepAlive() {
   }
 }
 
+// ========== DELAY HELPER ==========
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+// ========== INATIVIDADE ==========
+function resetInactivityTimer(socket: WASocket, senderJid: string) {
+  const key = senderJid
+  // Limpar timer anterior
+  if (inactivityTimers.has(key)) {
+    clearTimeout(inactivityTimers.get(key)!)
+  }
+  // Setar novo timer de 5 minutos
+  const timer = setTimeout(async () => {
+    try {
+      const inactivityMsg = `Ei, ainda estou por aqui! 😊
+
+Se quiser continuar de onde paramos, é só me chamar.
+
+O *teste grátis de 7 dias* está te esperando:
+
+👉 *https://clinigo.app/trial*
+
+Até breve! 💙 — _Clin, Assistente CliniGo_`
+      await socket.sendMessage(senderJid, { text: inactivityMsg })
+      console.log(`[Clin] ⏰ Follow-up de inatividade enviado para ${senderJid.split('@')[0]}`)
+    } catch (err) {
+      console.error(`[Clin] Erro ao enviar inatividade:`, err)
+    }
+    inactivityTimers.delete(key)
+  }, INACTIVITY_TIMEOUT)
+  inactivityTimers.set(key, timer)
+}
+
 // ========== HANDLER DE MENSAGENS ==========
 async function handleIncomingMessage(socket: WASocket, senderJid: string, text: string) {
   const senderPhone = senderJid.split('@')[0]
@@ -85,6 +123,9 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
     history.splice(0, history.length - 20)
   }
 
+  // Resetar timer de inatividade
+  resetInactivityTimer(socket, senderJid)
+
   try {
     await socket.presenceSubscribe(senderJid)
     await socket.sendPresenceUpdate('composing', senderJid)
@@ -98,21 +139,61 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
         message: text,
         sessionId: `wa-${senderPhone}`,
         sourcePage: 'whatsapp',
-        history: history.slice(-10),
+        source: 'whatsapp',
       }),
     })
 
     if (!response.ok) throw new Error(`API retornou ${response.status}`)
 
     const data: any = await response.json()
-    const reply = data.reply || 'Desculpe, estou com dificuldade técnica. Tente novamente em instantes! 😊'
 
-    history.push({ role: 'assistant', content: reply })
+    // Parsear array de mensagens (novo formato)
+    const messages: string[] = data.messages || (data.reply ? [data.reply] : [])
+    if (messages.length === 0) {
+      messages.push('Desculpe, estou com dificuldade técnica. Tente novamente em instantes! 😊')
+    }
+
+    // Salvar no histórico
+    for (const msg of messages) {
+      history.push({ role: 'assistant', content: msg })
+    }
+
+    // Enviar cada mensagem com delay de 1.5s entre elas
+    for (let i = 0; i < messages.length; i++) {
+      if (i > 0) {
+        // Indicar composing entre mensagens
+        try { await socket.sendPresenceUpdate('composing', senderJid) } catch { /* */ }
+        await delay(1500)
+      }
+      await socket.sendMessage(senderJid, { text: messages[i] })
+    }
 
     try { await socket.sendPresenceUpdate('paused', senderJid) } catch { /* */ }
 
-    await socket.sendMessage(senderJid, { text: reply })
-    console.log(`[Clin] ✅ Respondido para ${senderPhone}`)
+    console.log(`[Clin] ✅ Respondido para ${senderPhone} (${messages.length} msg${messages.length > 1 ? 's' : ''})`)
+
+    // Se API indicou follow-up (trial), enviar após 30s
+    if (data.sendFollowUp && data.followUpMessages) {
+      setTimeout(async () => {
+        try {
+          for (let i = 0; i < data.followUpMessages.length; i++) {
+            if (i > 0) await delay(1500)
+            await socket.sendMessage(senderJid, { text: data.followUpMessages[i] })
+          }
+          console.log(`[Clin] ✅ Follow-up enviado para ${senderPhone}`)
+        } catch (err) {
+          console.error(`[Clin] Erro ao enviar follow-up:`, err)
+        }
+      }, 30000)
+    }
+
+    // Se transferiu, limpar timer de inatividade
+    if (data.transfer) {
+      if (inactivityTimers.has(senderJid)) {
+        clearTimeout(inactivityTimers.get(senderJid)!)
+        inactivityTimers.delete(senderJid)
+      }
+    }
 
   } catch (err) {
     console.error(`[Clin] ❌ Erro ao chamar API:`, err)
