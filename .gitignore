@@ -1,0 +1,4 @@
+node_modules
+dist
+.clin-auth
+.env
