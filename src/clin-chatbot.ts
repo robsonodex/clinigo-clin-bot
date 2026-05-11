@@ -35,6 +35,7 @@ let clinQrCode: string | null = null
 let clinPhoneNumber: string | null = null
 let reconnectAttempt = 0
 let manualDisconnect = false // Flag para diferenciar desconexão manual vs queda
+let isStarting = false // Guard contra starts concorrentes (NÃO usa clinStatus)
 let keepAliveInterval: ReturnType<typeof setInterval> | null = null
 
 // Histórico de conversas in-memory
@@ -125,9 +126,10 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
 
 // ========== INICIAR SESSÃO BAILEYS (SESSÃO ETERNA) ==========
 async function startClinSession() {
-  if (clinStatus === 'connecting') return
+  if (isStarting) return // Guard contra chamadas concorrentes
   if (manualDisconnect) return // Não reconectar se foi desconexão manual
 
+  isStarting = true
   clinStatus = 'connecting'
   clinQrCode = null
 
@@ -171,6 +173,7 @@ async function startClinSession() {
       }
 
       if (connection === 'open') {
+        isStarting = false // Libertar guard
         clinStatus = 'connected'
         clinQrCode = null
         reconnectAttempt = 0 // Reset do contador
@@ -199,6 +202,7 @@ async function startClinSession() {
       }
 
       if (connection === 'close') {
+        isStarting = false // Libertar guard para permitir reconexão
         stopKeepAlive()
         clinSocket = null
         clinQrCode = null
