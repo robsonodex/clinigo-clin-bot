@@ -44,6 +44,15 @@ app.listen(PORT, () => {
   initClin()
 })
 
+// Prevenir crash por erros internos do Baileys (promise rejections durante sync)
+process.on('uncaughtException', (err) => {
+  console.error('[Clin] ⚠️ uncaughtException (processo NÃO morreu):', err.message)
+})
+
+process.on('unhandledRejection', (reason: any) => {
+  console.error('[Clin] ⚠️ unhandledRejection (processo NÃO morreu):', reason?.message || reason)
+})
+
 // Graceful shutdown
 process.on('SIGTERM', () => {
   console.log('SIGTERM received, closing...')
