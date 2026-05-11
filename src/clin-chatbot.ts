@@ -133,11 +133,11 @@ async function startClinSession() {
   clinQrCode = null
   lastConnectionError = null
 
-  // Limpar auth antigo para forçar novo QR
-  if (fs.existsSync(AUTH_DIR)) {
-    fs.rmSync(AUTH_DIR, { recursive: true, force: true })
+  // Apenas criar o diretório se não existir — NUNCA apagar aqui
+  // (apagar só no /clin/connect explícito ou loggedOut)
+  if (!fs.existsSync(AUTH_DIR)) {
+    fs.mkdirSync(AUTH_DIR, { recursive: true })
   }
-  fs.mkdirSync(AUTH_DIR, { recursive: true })
 
   try {
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
@@ -376,6 +376,18 @@ export function setupClinRoutes(app: Express) {
     if (clinStatus === 'connected') {
       return res.json({ status: 'connected', phone_number: clinPhoneNumber })
     }
+
+    // Limpar sessão anterior para forçar novo QR limpo
+    isStarting = false
+    if (clinSocket) {
+      try { clinSocket.end(undefined) } catch { /* */ }
+      clinSocket = null
+    }
+    if (fs.existsSync(AUTH_DIR)) {
+      fs.rmSync(AUTH_DIR, { recursive: true, force: true })
+    }
+    reconnectAttempt = 0
+
     startClinSession().catch(console.error)
     res.json({ status: 'connecting', message: 'Iniciando. Acesse /clin/qr para QR Code.' })
   })
