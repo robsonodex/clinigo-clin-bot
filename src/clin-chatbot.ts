@@ -314,9 +314,17 @@ export function setupClinRoutes(app: Express) {
       return res.json({ status: 'connected', qr: null, phone_number: clinPhoneNumber })
     }
 
+    // Se está "connecting" mas sem QR e sem socket (sessão travada pós-redeploy), resetar
+    if (clinStatus === 'connecting' && !clinQrCode && !clinSocket) {
+      console.log('[Clin] ⚠️ Sessão travada em connecting sem socket — resetando...')
+      isStarting = false
+      clinStatus = 'disconnected'
+    }
+
     // Iniciar sessão se necessário
     if (!clinQrCode && clinStatus !== 'connecting') {
       manualDisconnect = false
+      isStarting = false // Garantir que não está travado
       startClinSession().catch(console.error)
     }
 
@@ -341,6 +349,27 @@ export function setupClinRoutes(app: Express) {
     }
 
     res.json({ status: clinStatus, qr: null })
+  })
+
+  // Debug endpoint
+  app.get('/clin/debug', (_req, res) => {
+    res.json({
+      status: clinStatus,
+      isStarting,
+      manualDisconnect,
+      hasSocket: !!clinSocket,
+      hasQrCode: !!clinQrCode,
+      phoneNumber: clinPhoneNumber,
+      reconnectAttempt,
+      authDirExists: fs.existsSync(AUTH_DIR),
+      authCredsExists: fs.existsSync(path.join(AUTH_DIR, 'creds.json')),
+      uptime: process.uptime(),
+      envCheck: {
+        hasClinApiUrl: !!process.env.CLIN_API_URL,
+        hasSupabaseUrl: !!process.env.SUPABASE_URL,
+        hasSupabaseKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      }
+    })
   })
 
   app.post('/clin/connect', async (_req, res) => {
