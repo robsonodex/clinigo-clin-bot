@@ -30,7 +30,7 @@ const AUTH_DIR = path.join(process.cwd(), '.clin-auth')
 
 // ========== STATE ==========
 let clinSocket: WASocket | null = null
-let clinStatus: 'disconnected' | 'connecting' | 'connected' = 'disconnected'
+let clinStatus: string = 'disconnected'
 let clinQrCode: string | null = null
 let clinPhoneNumber: string | null = null
 let reconnectAttempt = 0
@@ -104,7 +104,7 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
 
     if (!response.ok) throw new Error(`API retornou ${response.status}`)
 
-    const data = await response.json()
+    const data: any = await response.json()
     const reply = data.reply || 'Desculpe, estou com dificuldade técnica. Tente novamente em instantes! 😊'
 
     history.push({ role: 'assistant', content: reply })
@@ -182,17 +182,19 @@ async function startClinSession() {
 
         const supabase = getSupabase()
         if (supabase) {
-          await supabase.from('whatsapp_sessions').upsert({
-            clinic_id: 'clin-sales-bot',
-            instance_name: 'clin-railway',
-            status: 'connected',
-            phone_number: clinPhoneNumber,
-            connected_at: new Date().toISOString(),
-            qr_code: null,
-            error_message: null,
-            last_health_check: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          }, { onConflict: 'clinic_id' }).catch(() => {})
+          try {
+            await supabase.from('whatsapp_sessions').upsert({
+              clinic_id: 'clin-sales-bot',
+              instance_name: 'clin-railway',
+              status: 'connected',
+              phone_number: clinPhoneNumber,
+              connected_at: new Date().toISOString(),
+              qr_code: null,
+              error_message: null,
+              last_health_check: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }, { onConflict: 'clinic_id' })
+          } catch { /* best effort */ }
         }
       }
 
@@ -218,13 +220,15 @@ async function startClinSession() {
 
           const supabase = getSupabase()
           if (supabase) {
-            await supabase.from('whatsapp_sessions').update({
-              status: 'disconnected',
-              disconnected_at: new Date().toISOString(),
-              qr_code: null,
-              phone_number: null,
-              updated_at: new Date().toISOString(),
-            }).eq('clinic_id', 'clin-sales-bot').catch(() => {})
+            try {
+              await supabase.from('whatsapp_sessions').update({
+                status: 'disconnected',
+                disconnected_at: new Date().toISOString(),
+                qr_code: null,
+                phone_number: null,
+                updated_at: new Date().toISOString(),
+              }).eq('clinic_id', 'clin-sales-bot')
+            } catch { /* best effort */ }
           }
 
           console.log(`[Clin] 🔴 Sessão encerrada pelo celular. Escaneie novamente via /clin/qr.`)
