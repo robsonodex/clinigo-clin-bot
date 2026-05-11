@@ -33,7 +33,7 @@ app.get('/health', (_req, res) => {
 // Clin WhatsApp routes
 setupClinRoutes(app)
 
-const PORT = process.env.PORT || 3002
+const PORT = process.env.PORT || 8080
 
 app.listen(PORT, () => {
   console.log(`🤖 Clin Bot Service`)
