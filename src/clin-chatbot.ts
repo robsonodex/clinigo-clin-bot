@@ -22,7 +22,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import type { Express } from 'express'
 
-const logger = pino({ level: 'warn' })
+const logger = pino({ level: 'info' }) // INFO para diagnóstico
 
 // ========== CONFIG ==========
 const CLIN_API_URL = process.env.CLIN_API_URL || 'https://clinigo.app/api/chatbot'
@@ -34,9 +34,10 @@ let clinStatus: string = 'disconnected'
 let clinQrCode: string | null = null
 let clinPhoneNumber: string | null = null
 let reconnectAttempt = 0
-let manualDisconnect = false // Flag para diferenciar desconexão manual vs queda
-let isStarting = false // Guard contra starts concorrentes (NÃO usa clinStatus)
+let manualDisconnect = false
+let isStarting = false
 let keepAliveInterval: ReturnType<typeof setInterval> | null = null
+let lastConnectionError: string | null = null // Debug: último erro
 
 // Histórico de conversas in-memory
 const conversations = new Map<string, { role: string; content: string }[]>()
@@ -52,11 +53,9 @@ function getSupabase() {
 // ========== KEEP-ALIVE ==========
 function startKeepAlive() {
   stopKeepAlive()
-  // Ping a cada 25s para manter a conexão viva
   keepAliveInterval = setInterval(() => {
     if (clinSocket && clinStatus === 'connected') {
       try {
-        // Enviar presença para manter conexão
         clinSocket.sendPresenceUpdate('available')
       } catch (err) {
         console.error('[Clin] KeepAlive error:', err)
@@ -126,20 +125,24 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
 
 // ========== INICIAR SESSÃO BAILEYS (SESSÃO ETERNA) ==========
 async function startClinSession() {
-  if (isStarting) return // Guard contra chamadas concorrentes
-  if (manualDisconnect) return // Não reconectar se foi desconexão manual
+  if (isStarting) return
+  if (manualDisconnect) return
 
   isStarting = true
   clinStatus = 'connecting'
   clinQrCode = null
+  lastConnectionError = null
 
-  if (!fs.existsSync(AUTH_DIR)) {
-    fs.mkdirSync(AUTH_DIR, { recursive: true })
+  // Limpar auth antigo para forçar novo QR
+  if (fs.existsSync(AUTH_DIR)) {
+    fs.rmSync(AUTH_DIR, { recursive: true, force: true })
   }
+  fs.mkdirSync(AUTH_DIR, { recursive: true })
 
   try {
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
     const { version } = await fetchLatestBaileysVersion()
+    console.log(`[Clin] 📡 Baileys v${version.join('.')} — iniciando sessão...`)
 
     const socket = makeWASocket({
       version,
@@ -149,15 +152,12 @@ async function startClinSession() {
       },
       logger: logger as any,
       printQRInTerminal: true,
-      browser: ['CliniGo Clin', 'Chrome', '120.0.0'],
+      browser: ['Ubuntu', 'Chrome', '22.0.0'],
       generateHighQualityLinkPreview: false,
       syncFullHistory: false,
-      // Configurações para sessão eterna
-      keepAliveIntervalMs: 30_000, // Heartbeat do Baileys a cada 30s
+      keepAliveIntervalMs: 30_000,
       retryRequestDelayMs: 500,
-      connectTimeoutMs: 60_000,
-      defaultQueryTimeoutMs: undefined, // Sem timeout de query
-      emitOwnEvents: false,
+      connectTimeoutMs: 120_000,
     })
 
     clinSocket = socket
@@ -165,6 +165,7 @@ async function startClinSession() {
     // ===== CONNECTION EVENTS =====
     socket.ev.on('connection.update', async (update: Partial<ConnectionState>) => {
       const { connection, lastDisconnect, qr } = update
+      console.log(`[Clin] 🔄 connection.update:`, JSON.stringify({ connection, qr: !!qr, hasLastDisconnect: !!lastDisconnect }))
 
       if (qr) {
         clinQrCode = qr
@@ -208,9 +209,11 @@ async function startClinSession() {
         clinQrCode = null
 
         const statusCode = (lastDisconnect?.error as any)?.output?.statusCode
+        const errorMessage = (lastDisconnect?.error as any)?.message || 'unknown'
         const isLoggedOut = statusCode === DisconnectReason.loggedOut
+        lastConnectionError = `code=${statusCode}, msg=${errorMessage}`
 
-        console.log(`[Clin] ⚠️ Conexão fechada (code=${statusCode}, loggedOut=${isLoggedOut})`)
+        console.log(`[Clin] ⚠️ Conexão fechada (code=${statusCode}, loggedOut=${isLoggedOut}, error=${errorMessage})`)
 
         if (isLoggedOut) {
           // ÚNICO caso onde a sessão realmente morre:
@@ -361,14 +364,10 @@ export function setupClinRoutes(app: Express) {
       hasQrCode: !!clinQrCode,
       phoneNumber: clinPhoneNumber,
       reconnectAttempt,
+      lastConnectionError,
       authDirExists: fs.existsSync(AUTH_DIR),
       authCredsExists: fs.existsSync(path.join(AUTH_DIR, 'creds.json')),
       uptime: process.uptime(),
-      envCheck: {
-        hasClinApiUrl: !!process.env.CLIN_API_URL,
-        hasSupabaseUrl: !!process.env.SUPABASE_URL,
-        hasSupabaseKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-      }
     })
   })
 
