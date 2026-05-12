@@ -147,6 +147,18 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
 
     const data: any = await response.json()
 
+    // Se sessão já foi transferida para humano → silenciar o bot completamente
+    if (data.transfer === true && (!data.messages || data.messages.length === 0)) {
+      console.log(`[Clin] 🔇 Sessão transferida para humano — bot silenciado para ${senderPhone}`)
+      try { await socket.sendPresenceUpdate('paused', senderJid) } catch { /* */ }
+      // Limpar timer de inatividade pois humano assumiu
+      if (inactivityTimers.has(senderJid)) {
+        clearTimeout(inactivityTimers.get(senderJid)!)
+        inactivityTimers.delete(senderJid)
+      }
+      return
+    }
+
     // Parsear array de mensagens (novo formato)
     const messages: string[] = data.messages || (data.reply ? [data.reply] : [])
     if (messages.length === 0) {
