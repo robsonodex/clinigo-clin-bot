@@ -527,7 +527,37 @@ export function setupClinRoutes(app: Express) {
     res.json({ status: 'disconnected' })
   })
 
-  console.log(`[Clin] 📡 Rotas: /clin/status, /clin/qr, /clin/connect, /clin/disconnect`)
+  app.post('/clin/send', async (req, res) => {
+    const { to, text } = req.body
+    if (!to || !text) {
+      return res.status(400).json({ error: 'Parâmetros "to" e "text" são obrigatórios' })
+    }
+    if (clinStatus !== 'connected' || !clinSocket) {
+      return res.status(400).json({ error: 'WhatsApp não está conectado' })
+    }
+    try {
+      // Limpar número para conter apenas dígitos
+      let formattedJid = to.replace(/\D/g, '')
+      
+      // Se não começar com DDI (ex: se tiver 10 ou 11 dígitos, adicionar 55 do Brasil)
+      if (formattedJid.length <= 11) {
+        formattedJid = `55${formattedJid}`
+      }
+
+      if (!formattedJid.endsWith('@s.whatsapp.net')) {
+        formattedJid = `${formattedJid}@s.whatsapp.net`
+      }
+      
+      await clinSocket.sendMessage(formattedJid, { text })
+      console.log(`[Clin] 🚀 Mensagem enviada manualmente para ${formattedJid}: ${text.substring(0, 50)}`)
+      res.json({ success: true })
+    } catch (err: any) {
+      console.error('[Clin] Erro ao enviar mensagem manual:', err)
+      res.status(500).json({ error: err.message || 'Erro ao enviar mensagem' })
+    }
+  })
+
+  console.log(`[Clin] 📡 Rotas: /clin/status, /clin/qr, /clin/connect, /clin/disconnect, /clin/send`)
 }
 
 // ========== AUTO-START ==========
