@@ -42,9 +42,9 @@ let lastConnectionError: string | null = null // Debug: último erro
 // Histórico de conversas in-memory
 const conversations = new Map<string, { role: string; content: string }[]>()
 
-// Timers de inatividade por sessão (5 minutos sem resposta → follow-up)
+// Timers de inatividade por sessão (30 minutos sem resposta → follow-up)
 const inactivityTimers = new Map<string, ReturnType<typeof setTimeout>>()
-const INACTIVITY_TIMEOUT = 5 * 60 * 1000 // 5 minutos
+const INACTIVITY_TIMEOUT = 30 * 60 * 1000 // 30 minutos
 
 // ========== SUPABASE ==========
 function getSupabase() {
