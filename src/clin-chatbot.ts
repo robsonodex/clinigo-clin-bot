@@ -44,7 +44,9 @@ const conversations = new Map<string, { role: string; content: string }[]>()
 
 // Timers de inatividade por sessão (30 minutos sem resposta → follow-up)
 const inactivityTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const inactivityTimers24h = new Map<string, ReturnType<typeof setTimeout>>()
 const INACTIVITY_TIMEOUT = 30 * 60 * 1000 // 30 minutos
+const INACTIVITY_TIMEOUT_24H = 24 * 60 * 60 * 1000 // 24 horas
 
 // ========== SUPABASE ==========
 function getSupabase() {
@@ -83,11 +85,18 @@ function delay(ms: number): Promise<void> {
 // ========== INATIVIDADE ==========
 function resetInactivityTimer(socket: WASocket, senderJid: string) {
   const key = senderJid
-  // Limpar timer anterior
+  
+  // Limpar timers anteriores
   if (inactivityTimers.has(key)) {
     clearTimeout(inactivityTimers.get(key)!)
+    inactivityTimers.delete(key)
   }
-  // Setar novo timer de 5 minutos
+  if (inactivityTimers24h.has(key)) {
+    clearTimeout(inactivityTimers24h.get(key)!)
+    inactivityTimers24h.delete(key)
+  }
+
+  // Setar novo timer de 30 minutos
   const timer = setTimeout(async () => {
     try {
       const inactivityMsg = `Ei, ainda estou por aqui! 😊
@@ -100,13 +109,64 @@ O *teste grátis de 7 dias* está te esperando:
 
 Até breve! 💙 — _Clin, Assistente CliniGo_`
       await socket.sendMessage(senderJid, { text: inactivityMsg })
-      console.log(`[Clin] ⏰ Follow-up de inatividade enviado para ${senderJid.split('@')[0]}`)
+      console.log(`[Clin] ⏰ Follow-up de inatividade (30min) enviado para ${senderJid.split('@')[0]}`)
+      
+      // Agendar o segundo follow-up para dali a 24 horas
+      schedule24hFollowUp(socket, senderJid)
     } catch (err) {
-      console.error(`[Clin] Erro ao enviar inatividade:`, err)
+      console.error(`[Clin] Erro ao enviar inatividade (30m):`, err)
     }
     inactivityTimers.delete(key)
   }, INACTIVITY_TIMEOUT)
   inactivityTimers.set(key, timer)
+}
+
+function schedule24hFollowUp(socket: WASocket, senderJid: string) {
+  const key = senderJid
+  if (inactivityTimers24h.has(key)) {
+    clearTimeout(inactivityTimers24h.get(key)!)
+  }
+  
+  const timer24h = setTimeout(async () => {
+    try {
+      // Atualizar o step da conversa no Supabase/Memory para 'recuperacao_24h' para receber resposta direcionada
+      const supabase = getSupabase()
+      if (supabase) {
+        const { data: session } = await supabase
+          .from('chatbot_sessions')
+          .select('conversation_state')
+          .eq('session_id', `wa-${senderJid.split('@')[0]}`)
+          .single()
+        
+        if (session?.conversation_state) {
+          const state = session.conversation_state as any
+          state.step = 'recuperacao_24h'
+          await supabase
+            .from('chatbot_sessions')
+            .update({ conversation_state: state })
+            .eq('session_id', `wa-${senderJid.split('@')[0]}`)
+        }
+      }
+
+      const msg24h = `Oi! Tudo bem? 😊
+
+Vi que você ficou com dúvida sobre o CliniGo.
+
+Se quiser, posso te conectar agora com um especialista — é rápido e sem compromisso.
+
+✅ *1* — Quero falar com especialista
+🚀 *2* — Prefiro testar grátis direto
+🔙 *0* — Ver o menu novamente`
+      
+      await socket.sendMessage(senderJid, { text: msg24h })
+      console.log(`[Clin] ⏰ Follow-up de inatividade (24h) enviado para ${senderJid.split('@')[0]}`)
+    } catch (err) {
+      console.error(`[Clin] Erro no follow-up de 24h:`, err)
+    }
+    inactivityTimers24h.delete(key)
+  }, INACTIVITY_TIMEOUT_24H)
+  
+  inactivityTimers24h.set(key, timer24h)
 }
 
 // ========== HANDLER DE MENSAGENS ==========
@@ -151,10 +211,14 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
     if (data.transfer === true && (!data.messages || data.messages.length === 0)) {
       console.log(`[Clin] 🔇 Sessão transferida para humano — bot silenciado para ${senderPhone}`)
       try { await socket.sendPresenceUpdate('paused', senderJid) } catch { /* */ }
-      // Limpar timer de inatividade pois humano assumiu
+      // Limpar timers de inatividade pois humano assumiu
       if (inactivityTimers.has(senderJid)) {
         clearTimeout(inactivityTimers.get(senderJid)!)
         inactivityTimers.delete(senderJid)
+      }
+      if (inactivityTimers24h.has(senderJid)) {
+        clearTimeout(inactivityTimers24h.get(senderJid)!)
+        inactivityTimers24h.delete(senderJid)
       }
       return
     }
@@ -199,11 +263,15 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
       }, 30000)
     }
 
-    // Se transferiu, limpar timer de inatividade
+    // Se transferiu, limpar timers de inatividade
     if (data.transfer) {
       if (inactivityTimers.has(senderJid)) {
         clearTimeout(inactivityTimers.get(senderJid)!)
         inactivityTimers.delete(senderJid)
+      }
+      if (inactivityTimers24h.has(senderJid)) {
+        clearTimeout(inactivityTimers24h.get(senderJid)!)
+        inactivityTimers24h.delete(senderJid)
       }
     }
 
