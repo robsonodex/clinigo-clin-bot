@@ -537,15 +537,39 @@ export function setupClinRoutes(app: Express) {
     }
     try {
       // Limpar número para conter apenas dígitos
-      let formattedJid = to.replace(/\D/g, '')
-      
-      // Se não começar com DDI (ex: se tiver 10 ou 11 dígitos, adicionar 55 do Brasil)
-      if (formattedJid.length <= 11) {
-        formattedJid = `55${formattedJid}`
-      }
+      const cleanPhone = to.replace(/\D/g, '')
+      const fullPhone = cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`
+      let formattedJid = `${fullPhone}@s.whatsapp.net`
 
-      if (!formattedJid.endsWith('@s.whatsapp.net')) {
-        formattedJid = `${formattedJid}@s.whatsapp.net`
+      // 🔍 Validar e corrigir nono dígito usando onWhatsApp do Baileys
+      try {
+        const [result] = await clinSocket.onWhatsApp(fullPhone)
+        if (result?.exists) {
+          formattedJid = result.jid
+          console.log(`[Clin] 🔍 onWhatsApp encontrou JID exato: ${formattedJid}`)
+        } else if (fullPhone.length === 13) {
+          // Tentar sem o 9 (muito comum no Brasil em DDDs fora de SP/RJ)
+          const semNove = fullPhone.substring(0, 4) + fullPhone.substring(5)
+          const [resSemNove] = await clinSocket.onWhatsApp(semNove)
+          if (resSemNove?.exists) {
+            formattedJid = resSemNove.jid
+            console.log(`[Clin] 🔄 Número corrigido automaticamente (removido 9): ${semNove} -> JID: ${formattedJid}`)
+          } else {
+            console.log(`[Clin] ⚠️ Número ${fullPhone} não foi encontrado pelo Meta, tentando enviar para o JID original.`)
+          }
+        } else if (fullPhone.length === 12) {
+          // Tentar com o 9
+          const comNove = fullPhone.substring(0, 4) + '9' + fullPhone.substring(4)
+          const [resComNove] = await clinSocket.onWhatsApp(comNove)
+          if (resComNove?.exists) {
+            formattedJid = resComNove.jid
+            console.log(`[Clin] 🔄 Número corrigido automaticamente (adicionado 9): ${comNove} -> JID: ${formattedJid}`)
+          } else {
+            console.log(`[Clin] ⚠️ Número ${fullPhone} não foi encontrado pelo Meta, tentando enviar para o JID original.`)
+          }
+        }
+      } catch (err: any) {
+        console.error('[Clin] Erro ao consultar onWhatsApp, usando JID padrão:', err.message)
       }
       
       await clinSocket.sendMessage(formattedJid, { text })
