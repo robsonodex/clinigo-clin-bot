@@ -689,11 +689,14 @@ export function setupClinRoutes(app: Express) {
         console.error('[Clin] Erro ao consultar onWhatsApp, usando JID padrão:', err.message)
       }
 
-      // Converter base64 para Buffer e enviar imagem
-      const imageBuffer = Buffer.from(imageBase64, 'base64')
+      // Higienizar a string base64 contra prefixos data-URI ou espaços em branco
+      const cleanBase64 = imageBase64.replace(/^data:image\/[a-z]+;base64,/, '').trim()
+      const imageBuffer = Buffer.from(cleanBase64, 'base64')
+      
       await clinSocket.sendMessage(formattedJid, {
         image: imageBuffer,
         caption: caption || '',
+        mimetype: 'image/jpeg'
       })
 
       console.log(`[Clin] 🖼️ Imagem enviada para ${formattedJid} (${Math.round(imageBuffer.length / 1024)}KB)`)
