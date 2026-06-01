@@ -611,29 +611,35 @@ export function setupClinRoutes(app: Express) {
 
       // 🔍 Validar e corrigir nono dígito usando onWhatsApp do Baileys
       try {
-        const [result] = await clinSocket.onWhatsApp(fullPhone)
+        const checkResult = await clinSocket.onWhatsApp(fullPhone)
+        const result = checkResult && checkResult.length > 0 ? checkResult[0] : null
+        
         if (result?.exists) {
           formattedJid = result.jid
           console.log(`[Clin] 🔍 onWhatsApp encontrou JID exato: ${formattedJid}`)
         } else if (fullPhone.length === 13) {
           // Tentar sem o 9 (muito comum no Brasil em DDDs fora de SP/RJ)
           const semNove = fullPhone.substring(0, 4) + fullPhone.substring(5)
-          const [resSemNove] = await clinSocket.onWhatsApp(semNove)
+          const checkSemNove = await clinSocket.onWhatsApp(semNove)
+          const resSemNove = checkSemNove && checkSemNove.length > 0 ? checkSemNove[0] : null
+          
           if (resSemNove?.exists) {
             formattedJid = resSemNove.jid
             console.log(`[Clin] 🔄 Número corrigido automaticamente (removido 9): ${semNove} -> JID: ${formattedJid}`)
           } else {
-            console.log(`[Clin] ⚠️ Número ${fullPhone} não foi encontrado pelo Meta, tentando enviar para o JID original.`)
+            console.log(`[Clin] ⚠️ Número ${fullPhone} não foi encontrado pelo Meta, trying default.`)
           }
         } else if (fullPhone.length === 12) {
           // Tentar com o 9
           const comNove = fullPhone.substring(0, 4) + '9' + fullPhone.substring(4)
-          const [resComNove] = await clinSocket.onWhatsApp(comNove)
+          const checkComNove = await clinSocket.onWhatsApp(comNove)
+          const resComNove = checkComNove && checkComNove.length > 0 ? checkComNove[0] : null
+          
           if (resComNove?.exists) {
             formattedJid = resComNove.jid
             console.log(`[Clin] 🔄 Número corrigido automaticamente (adicionado 9): ${comNove} -> JID: ${formattedJid}`)
           } else {
-            console.log(`[Clin] ⚠️ Número ${fullPhone} não foi encontrado pelo Meta, tentando enviar para o JID original.`)
+            console.log(`[Clin] ⚠️ Número ${fullPhone} não foi encontrado pelo Meta, trying default.`)
           }
         }
       } catch (err: any) {
@@ -666,20 +672,26 @@ export function setupClinRoutes(app: Express) {
 
       // Validar e corrigir nono dígito usando onWhatsApp do Baileys
       try {
-        const [result] = await clinSocket.onWhatsApp(fullPhone)
+        const checkResult = await clinSocket.onWhatsApp(fullPhone)
+        const result = checkResult && checkResult.length > 0 ? checkResult[0] : null
+        
         if (result?.exists) {
           formattedJid = result.jid
           console.log(`[Clin] 🔍 onWhatsApp encontrou JID exato: ${formattedJid}`)
         } else if (fullPhone.length === 13) {
           const semNove = fullPhone.substring(0, 4) + fullPhone.substring(5)
-          const [resSemNove] = await clinSocket.onWhatsApp(semNove)
+          const checkSemNove = await clinSocket.onWhatsApp(semNove)
+          const resSemNove = checkSemNove && checkSemNove.length > 0 ? checkSemNove[0] : null
+          
           if (resSemNove?.exists) {
             formattedJid = resSemNove.jid
             console.log(`[Clin] 🔄 Número corrigido (removido 9): ${semNove} -> JID: ${formattedJid}`)
           }
         } else if (fullPhone.length === 12) {
           const comNove = fullPhone.substring(0, 4) + '9' + fullPhone.substring(4)
-          const [resComNove] = await clinSocket.onWhatsApp(comNove)
+          const checkComNove = await clinSocket.onWhatsApp(comNove)
+          const resComNove = checkComNove && checkComNove.length > 0 ? checkComNove[0] : null
+          
           if (resComNove?.exists) {
             formattedJid = resComNove.jid
             console.log(`[Clin] 🔄 Número corrigido (adicionado 9): ${comNove} -> JID: ${formattedJid}`)
