@@ -649,7 +649,62 @@ export function setupClinRoutes(app: Express) {
     }
   })
 
-  console.log(`[Clin] 📡 Rotas: /clin/status, /clin/qr, /clin/connect, /clin/disconnect, /clin/send`)
+  // ===== ENVIO DE IMAGEM =====
+  app.post('/clin/send-image', async (req, res) => {
+    const { to, imageBase64, caption } = req.body
+    if (!to || !imageBase64) {
+      return res.status(400).json({ error: 'Parâmetros "to" e "imageBase64" são obrigatórios' })
+    }
+    if (clinStatus !== 'connected' || !clinSocket) {
+      return res.status(400).json({ error: 'WhatsApp não está conectado' })
+    }
+    try {
+      // Limpar número para conter apenas dígitos
+      const cleanPhone = to.replace(/\D/g, '')
+      const fullPhone = cleanPhone.startsWith('55') ? cleanPhone : `55${cleanPhone}`
+      let formattedJid = `${fullPhone}@s.whatsapp.net`
+
+      // Validar e corrigir nono dígito usando onWhatsApp do Baileys
+      try {
+        const [result] = await clinSocket.onWhatsApp(fullPhone)
+        if (result?.exists) {
+          formattedJid = result.jid
+          console.log(`[Clin] 🔍 onWhatsApp encontrou JID exato: ${formattedJid}`)
+        } else if (fullPhone.length === 13) {
+          const semNove = fullPhone.substring(0, 4) + fullPhone.substring(5)
+          const [resSemNove] = await clinSocket.onWhatsApp(semNove)
+          if (resSemNove?.exists) {
+            formattedJid = resSemNove.jid
+            console.log(`[Clin] 🔄 Número corrigido (removido 9): ${semNove} -> JID: ${formattedJid}`)
+          }
+        } else if (fullPhone.length === 12) {
+          const comNove = fullPhone.substring(0, 4) + '9' + fullPhone.substring(4)
+          const [resComNove] = await clinSocket.onWhatsApp(comNove)
+          if (resComNove?.exists) {
+            formattedJid = resComNove.jid
+            console.log(`[Clin] 🔄 Número corrigido (adicionado 9): ${comNove} -> JID: ${formattedJid}`)
+          }
+        }
+      } catch (err: any) {
+        console.error('[Clin] Erro ao consultar onWhatsApp, usando JID padrão:', err.message)
+      }
+
+      // Converter base64 para Buffer e enviar imagem
+      const imageBuffer = Buffer.from(imageBase64, 'base64')
+      await clinSocket.sendMessage(formattedJid, {
+        image: imageBuffer,
+        caption: caption || '',
+      })
+
+      console.log(`[Clin] 🖼️ Imagem enviada para ${formattedJid} (${Math.round(imageBuffer.length / 1024)}KB)`)
+      res.json({ success: true })
+    } catch (err: any) {
+      console.error('[Clin] Erro ao enviar imagem:', err)
+      res.status(500).json({ error: err.message || 'Erro ao enviar imagem' })
+    }
+  })
+
+  console.log(`[Clin] 📡 Rotas: /clin/status, /clin/qr, /clin/connect, /clin/disconnect, /clin/send, /clin/send-image`)
 }
 
 // ========== AUTO-START ==========
