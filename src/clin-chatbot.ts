@@ -9,6 +9,7 @@
  */
 
 import makeWASocket, {
+  BufferJSON,
   DisconnectReason,
   fetchLatestBaileysVersion,
   makeCacheableSignalKeyStore,
