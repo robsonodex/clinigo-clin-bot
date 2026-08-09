@@ -451,7 +451,7 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
       }, 30000)
     }
 
-    // Se transferiu, limpar timers de inatividade
+    // Se transferiu, limpar timers de inatividade e notificar o Especialista no (21) 96553-2247
     if (data.transfer) {
       if (inactivityTimers.has(senderJid)) {
         clearTimeout(inactivityTimers.get(senderJid)!)
@@ -460,6 +460,36 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
       if (inactivityTimers24h.has(senderJid)) {
         clearTimeout(inactivityTimers24h.get(senderJid)!)
         inactivityTimers24h.delete(senderJid)
+      }
+
+      // 📲 Notificar o Especialista no WhatsApp (21 96553-2247)
+      try {
+        const lead = data.leadToSave || {}
+        const rawPhone = senderPhone.replace(/\D/g, '')
+        const cleanLeadPhone = rawPhone.startsWith('55') ? rawPhone : `55${rawPhone}`
+        const specialistPhone = process.env.SPECIALIST_PHONE || '5521965532247'
+        const specialistJid = `${specialistPhone}@s.whatsapp.net`
+
+        const prefilledMsg = encodeURIComponent(
+          `Olá ${lead.nome || ''}! Sou o especialista do CliniGo. Vi que você cadastrou a clínica ${lead.clinica || ''}. Como posso te ajudar?`
+        )
+        const waLink = `https://wa.me/${cleanLeadPhone}?text=${prefilledMsg}`
+
+        const specialistText = `🚨 *NOVO LEAD QUALIFICADO NO BOT!* 🚨\n\n` +
+          `👤 *Nome:* ${lead.nome || 'Não informado'}\n` +
+          `🏥 *Clínica:* ${lead.clinica || 'Não informada'}\n` +
+          `👥 *Equipe:* ${lead.numProfissionais || '?'} profissional(is)\n` +
+          `💡 *Plano Indicado:* ${lead.planoIndicado || 'A definir'}\n` +
+          `🎯 *Principal Interesse:* ${lead.dorPrincipal || 'Não informado'}\n` +
+          `📱 *Telefone do Lead:* +${cleanLeadPhone}\n\n` +
+          `━━━━━━━━━━━━━━━━━━\n` +
+          `👇 *CLIQUE NO LINK ABAIXO PARA INICIAR A CONVERSA:* \n` +
+          `${waLink}`
+
+        await socket.sendMessage(specialistJid, { text: specialistText })
+        console.log(`[Clin] 📲 Notificação de lead enviada com sucesso para o Especialista (${specialistPhone})`)
+      } catch (specErr: any) {
+        console.error(`[Clin] ⚠️ Erro ao enviar notificação para o Especialista:`, specErr?.message || specErr)
       }
     }
 
