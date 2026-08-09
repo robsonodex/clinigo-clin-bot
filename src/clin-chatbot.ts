@@ -62,6 +62,28 @@ async function downloadAuthFromSupabase(): Promise<boolean> {
   if (!supabase) return false
 
   try {
+    // 1. Tentar primeiro o formato single-file (default_auth_info.json)
+    const { data: singleData, error: singleErr } = await supabase.storage
+      .from('whatsapp-sessions')
+      .download('clin-sales-bot/default_auth_info.json')
+
+    if (singleData && !singleErr) {
+      const text = Buffer.from(await singleData.arrayBuffer()).toString('utf-8')
+      const parsed = JSON.parse(text, BufferJSON.reviver)
+      if (parsed && parsed.creds) {
+        if (!fs.existsSync(AUTH_DIR)) {
+          fs.mkdirSync(AUTH_DIR, { recursive: true })
+        }
+        fs.writeFileSync(
+          path.join(AUTH_DIR, 'creds.json'),
+          JSON.stringify(parsed.creds, BufferJSON.replacer, 2)
+        )
+        console.log(`[Clin] 📥 Credenciais restauradas do Supabase Storage (default_auth_info.json) | me:`, parsed.creds.me?.id)
+        return true
+      }
+    }
+
+    // 2. Fallback: tentar pasta multi-file (clin-sales-bot-files)
     const { data: files, error } = await supabase.storage
       .from('whatsapp-sessions')
       .list('clin-sales-bot-files')
@@ -83,7 +105,7 @@ async function downloadAuthFromSupabase(): Promise<boolean> {
         fs.writeFileSync(path.join(AUTH_DIR, file.name), buffer)
       }
     }
-    console.log(`[Clin] 📥 Credenciais restauradas do Supabase Storage (${files.length} arquivos)`)
+    console.log(`[Clin] 📥 Credenciais multi-file restauradas do Supabase Storage (${files.length} arquivos)`)
     return true
   } catch (err: any) {
     console.error(`[Clin] Erro ao baixar credenciais do Supabase:`, err.message)
@@ -97,6 +119,20 @@ async function uploadAuthToSupabase() {
 
   try {
     if (!fs.existsSync(AUTH_DIR)) return
+
+    const credsFile = path.join(AUTH_DIR, 'creds.json')
+    if (fs.existsSync(credsFile)) {
+      const credsContent = fs.readFileSync(credsFile, 'utf-8')
+      const credsObj = JSON.parse(credsContent, BufferJSON.reviver)
+      const singlePayload = JSON.stringify({ creds: credsObj, keys: {} }, BufferJSON.replacer)
+
+      await supabase.storage
+        .from('whatsapp-sessions')
+        .upload('clin-sales-bot/default_auth_info.json', Buffer.from(singlePayload), {
+          contentType: 'application/json',
+          upsert: true
+        })
+    }
 
     const files = fs.readdirSync(AUTH_DIR)
     for (const file of files) {
