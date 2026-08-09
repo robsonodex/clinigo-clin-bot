@@ -169,6 +169,31 @@ Se quiser, posso te conectar agora com um especialista — é rápido e sem comp
   inactivityTimers24h.set(key, timer24h)
 }
 
+/**
+ * Extrai o texto contido na mensagem Baileys (efêmera, botões, listas, etc)
+ */
+function extractMessageText(msg: any): string {
+  const m = msg.message
+  if (!m) return ''
+
+  const message = m.ephemeralMessage?.message
+    || m.viewOnceMessage?.message
+    || m.viewOnceMessageV2?.message
+    || m.documentWithCaptionMessage?.message
+    || m
+
+  return message.conversation
+    || message.extendedTextMessage?.text
+    || message.buttonsResponseMessage?.selectedButtonId
+    || message.buttonsResponseMessage?.selectedDisplayText
+    || message.listResponseMessage?.singleSelectReply?.selectedRowId
+    || message.listResponseMessage?.title
+    || message.templateButtonReplyMessage?.selectedId
+    || message.imageMessage?.caption
+    || message.videoMessage?.caption
+    || ''
+}
+
 // ========== HANDLER DE MENSAGENS ==========
 async function handleIncomingMessage(socket: WASocket, senderJid: string, text: string) {
   const senderPhone = senderJid.split('@')[0]
@@ -279,8 +304,10 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
     console.error(`[Clin] ❌ Erro ao chamar API:`, err)
     try { await socket.sendPresenceUpdate('paused', senderJid) } catch { /* */ }
     await socket.sendMessage(senderJid, {
-      text: 'Oi! 😊 Estou com uma dificuldade técnica momentânea. Mas não se preocupe, nossa equipe já foi notificada e vai te atender em breve!'
+      text: 'Olá! 😊 Como posso te ajudar hoje?\n\n1 — O que é o CliniGo\n2 — Planos e preços\n3 — Demonstração gratuita\n4 — Funcionalidades\n5 — Falar com especialista'
     })
+  } finally {
+    try { await socket.sendPresenceUpdate('paused', senderJid) } catch { /* best effort */ }
   }
 }
 
@@ -445,9 +472,7 @@ async function startClinSession() {
         if (msg.key.remoteJid?.endsWith('@g.us')) continue
         if (msg.key.remoteJid === 'status@broadcast') continue
 
-        const text = msg.message?.conversation
-          || msg.message?.extendedTextMessage?.text
-          || ''
+        const text = extractMessageText(msg)
 
         if (!text.trim()) continue
 
