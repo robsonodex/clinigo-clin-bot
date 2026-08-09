@@ -465,15 +465,32 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
       // 📲 Notificar o Especialista no WhatsApp (21 96553-2247)
       try {
         const lead = data.leadToSave || {}
-        const rawPhone = senderPhone.replace(/\D/g, '')
-        const cleanLeadPhone = rawPhone.startsWith('55') ? rawPhone : `55${rawPhone}`
+        let rawPhone = (lead.telefone || senderPhone || '').replace(/\D/g, '')
+
+        if (!rawPhone.startsWith('55') && (rawPhone.length === 10 || rawPhone.length === 11)) {
+          rawPhone = `55${rawPhone}`
+        }
+
+        // Validar se o telefone com 55 é válido (12 ou 13 dígitos no Brasil)
+        const isValidPhone = rawPhone.length >= 12 && rawPhone.length <= 13
+
         const specialistPhone = process.env.SPECIALIST_PHONE || '5521965532247'
         const specialistJid = `${specialistPhone}@s.whatsapp.net`
 
         const prefilledMsg = encodeURIComponent(
           `Olá ${lead.nome || ''}! Sou o especialista do CliniGo. Vi que você cadastrou a clínica ${lead.clinica || ''}. Como posso te ajudar?`
         )
-        const waLink = `https://wa.me/${cleanLeadPhone}?text=${prefilledMsg}`
+
+        let waLink = ''
+        let phoneDisplay = ''
+
+        if (isValidPhone) {
+          waLink = `https://wa.me/${rawPhone}?text=${prefilledMsg}`
+          phoneDisplay = `+${rawPhone}`
+        } else {
+          waLink = `https://wa.me/5521975129005`
+          phoneDisplay = `Contato via WhatsApp Web / ID Privacidade (${senderPhone})`
+        }
 
         const specialistText = `🚨 *NOVO LEAD QUALIFICADO NO BOT!* 🚨\n\n` +
           `👤 *Nome:* ${lead.nome || 'Não informado'}\n` +
@@ -481,10 +498,11 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
           `👥 *Equipe:* ${lead.numProfissionais || '?'} profissional(is)\n` +
           `💡 *Plano Indicado:* ${lead.planoIndicado || 'A definir'}\n` +
           `🎯 *Principal Interesse:* ${lead.dorPrincipal || 'Não informado'}\n` +
-          `📱 *Telefone do Lead:* +${cleanLeadPhone}\n\n` +
+          `📱 *Telefone do Lead:* ${phoneDisplay}\n\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
-          `👇 *CLIQUE NO LINK ABAIXO PARA INICIAR A CONVERSA:* \n` +
-          `${waLink}`
+          (isValidPhone 
+            ? `👇 *CLIQUE NO LINK ABAIXO PARA INICIAR A CONVERSA:* \n${waLink}`
+            : `👇 *ABRA A CONVERSA DIRETA NO WHATSAPP DO BOT (21 97512-9005):* \n${waLink}`)
 
         await socket.sendMessage(specialistJid, { text: specialistText })
         console.log(`[Clin] 📲 Notificação de lead enviada com sucesso para o Especialista (${specialistPhone})`)
@@ -677,10 +695,20 @@ async function startClinSession() {
         if (!text.trim()) continue
 
         let senderJid = msg.key.remoteJid!
-        if (senderJid.endsWith('@lid') && (msg.key as any).remoteJidAlt) {
-          const altJid = (msg.key as any).remoteJidAlt
-          console.log(`[Clin] 🔀 JID @lid ${senderJid} convertido para remoteJidAlt: ${altJid}`)
-          senderJid = altJid
+        const altJid = (msg.key as any).remoteJidAlt 
+          || (msg.key as any).participantAlt 
+          || msg.key.participant 
+          || (msg as any).participant 
+          || (msg as any).userJid 
+          || null
+
+        if (senderJid.endsWith('@lid') || senderJid.split('@')[0].length > 13) {
+          if (altJid && (altJid.endsWith('@s.whatsapp.net') || altJid.split('@')[0].length <= 13)) {
+            console.log(`[Clin] 🔀 JID LID ${senderJid} convertido para JID real: ${altJid}`)
+            senderJid = altJid
+          } else {
+            console.log(`[Clin] ℹ️ JID LID sem altJid direto. Key info:`, JSON.stringify(msg.key))
+          }
         }
 
         console.log(`[Clin] 📩 Mensagem de ${senderJid.split('@')[0]}: ${text.substring(0, 50)}`)
