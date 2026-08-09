@@ -56,6 +56,65 @@ function getSupabase() {
   return createClient(url, key)
 }
 
+// ========== SUPABASE STORAGE AUTH PERSISTENCE ==========
+async function downloadAuthFromSupabase(): Promise<boolean> {
+  const supabase = getSupabase()
+  if (!supabase) return false
+
+  try {
+    const { data: files, error } = await supabase.storage
+      .from('whatsapp-sessions')
+      .list('clin-sales-bot-files')
+
+    if (error || !files || files.length === 0) return false
+
+    if (!fs.existsSync(AUTH_DIR)) {
+      fs.mkdirSync(AUTH_DIR, { recursive: true })
+    }
+
+    for (const file of files) {
+      if (file.name.startsWith('.')) continue
+      const { data: fileData, error: downloadErr } = await supabase.storage
+        .from('whatsapp-sessions')
+        .download(`clin-sales-bot-files/${file.name}`)
+
+      if (fileData && !downloadErr) {
+        const buffer = Buffer.from(await fileData.arrayBuffer())
+        fs.writeFileSync(path.join(AUTH_DIR, file.name), buffer)
+      }
+    }
+    console.log(`[Clin] 📥 Credenciais restauradas do Supabase Storage (${files.length} arquivos)`)
+    return true
+  } catch (err: any) {
+    console.error(`[Clin] Erro ao baixar credenciais do Supabase:`, err.message)
+    return false
+  }
+}
+
+async function uploadAuthToSupabase() {
+  const supabase = getSupabase()
+  if (!supabase) return
+
+  try {
+    if (!fs.existsSync(AUTH_DIR)) return
+
+    const files = fs.readdirSync(AUTH_DIR)
+    for (const file of files) {
+      if (file.startsWith('.')) continue
+      const filePath = path.join(AUTH_DIR, file)
+      if (fs.statSync(filePath).isFile()) {
+        const content = fs.readFileSync(filePath)
+        await supabase.storage
+          .from('whatsapp-sessions')
+          .upload(`clin-sales-bot-files/${file}`, content, { upsert: true })
+      }
+    }
+    console.log(`[Clin] 📤 Credenciais sincronizadas com Supabase Storage`)
+  } catch (err: any) {
+    console.error(`[Clin] Erro ao subir credenciais para Supabase:`, err.message)
+  }
+}
+
 // ========== KEEP-ALIVE ==========
 function startKeepAlive() {
   stopKeepAlive()
@@ -477,7 +536,10 @@ async function startClinSession() {
       }
     })
 
-    socket.ev.on('creds.update', saveCreds)
+    socket.ev.on('creds.update', async () => {
+      await saveCreds()
+      uploadAuthToSupabase().catch(() => {})
+    })
 
     // ===== LISTENER DE MENSAGENS =====
     socket.ev.on('messages.upsert', async (m) => {
@@ -768,12 +830,9 @@ export function setupClinRoutes(app: Express) {
 }
 
 // ========== AUTO-START ==========
-export function initClin() {
+export async function initClin() {
   manualDisconnect = false
-  if (fs.existsSync(path.join(AUTH_DIR, 'creds.json'))) {
-    console.log(`[Clin] 🔄 Auth encontrado — reconectando automaticamente...`)
-    startClinSession().catch(console.error)
-  } else {
-    console.log(`[Clin] ⏳ Aguardando conexão via /clin/connect ou /clin/qr`)
-  }
+  console.log(`[Clin] 🚀 Inicializando bot... Baixando credenciais do Supabase Storage...`)
+  await downloadAuthFromSupabase()
+  startClinSession().catch(console.error)
 }
