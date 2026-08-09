@@ -465,35 +465,62 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
       // 📲 Notificar o Especialista no WhatsApp (21 96553-2247)
       try {
         const lead = data.leadToSave || {}
-        let rawPhone = (lead.telefone || senderPhone || '').replace(/\D/g, '')
 
-        if (!rawPhone.startsWith('55') && (rawPhone.length === 10 || rawPhone.length === 11)) {
-          rawPhone = `55${rawPhone}`
+        // 1. Tentar pegar telefone do leadToSave (coletado pelo engine)
+        let leadPhone = (lead.telefone || '').replace(/\D/g, '')
+        if (leadPhone && !leadPhone.startsWith('55') && (leadPhone.length === 10 || leadPhone.length === 11)) {
+          leadPhone = `55${leadPhone}`
         }
+
+        // 2. Tentar senderPhone SOMENTE se tiver entre 10-13 dígitos (telefone real, não LID)
+        let senderClean = senderPhone.replace(/\D/g, '')
+        if (senderClean && !senderClean.startsWith('55') && (senderClean.length === 10 || senderClean.length === 11)) {
+          senderClean = `55${senderClean}`
+        }
+        // Se senderClean tem mais de 13 dígitos, é um LID → descartar
+        const senderIsValid = senderClean.length >= 12 && senderClean.length <= 13
+
+        // 3. Escolher o melhor telefone disponível
+        const leadPhoneIsValid = leadPhone.length >= 12 && leadPhone.length <= 13
+        const finalPhone = leadPhoneIsValid ? leadPhone : (senderIsValid ? senderClean : '')
+
+        console.log(`[Clin] 📞 Telefone debug — lead.telefone: "${lead.telefone}", senderPhone: "${senderPhone}", leadPhone: "${leadPhone}", senderClean: "${senderClean}", finalPhone: "${finalPhone}"`)
 
         const specialistPhone = process.env.SPECIALIST_PHONE || '5521965532247'
         const specialistJid = `${specialistPhone}@s.whatsapp.net`
 
-        const prefilledMsg = encodeURIComponent(
-          `Olá ${lead.nome || ''}! Sou o especialista do CliniGo. Vi que você cadastrou a clínica ${lead.clinica || ''}. Como posso te ajudar?`
-        )
+        let specialistText = ''
 
-        const waLink = `https://wa.me/${rawPhone}?text=${prefilledMsg}`
-        const phoneDisplay = `+${rawPhone}`
+        if (finalPhone) {
+          const prefilledMsg = encodeURIComponent(
+            `Olá ${lead.nome || ''}! Sou o especialista do CliniGo. Vi que você cadastrou a clínica ${lead.clinica || ''}. Como posso te ajudar?`
+          )
+          const waLink = `https://wa.me/${finalPhone}?text=${prefilledMsg}`
 
-        const specialistText = `🚨 *NOVO LEAD QUALIFICADO NO BOT!* 🚨\n\n` +
-          `👤 *Nome:* ${lead.nome || 'Não informado'}\n` +
-          `🏥 *Clínica:* ${lead.clinica || 'Não informada'}\n` +
-          `👥 *Equipe:* ${lead.numProfissionais || '?'} profissional(is)\n` +
-          `💡 *Plano Indicado:* ${lead.planoIndicado || 'A definir'}\n` +
-          `🎯 *Principal Interesse:* ${lead.dorPrincipal || 'Não informado'}\n` +
-          `📱 *Telefone do Lead:* ${phoneDisplay}\n\n` +
-          `━━━━━━━━━━━━━━━━━━\n` +
-          `👇 *CLIQUE NO LINK ABAIXO PARA INICIAR A CONVERSA COM O LEAD:* \n` +
-          `${waLink}`
+          specialistText = `🚨 *NOVO LEAD QUALIFICADO NO BOT!* 🚨\n\n` +
+            `👤 *Nome:* ${lead.nome || 'Não informado'}\n` +
+            `🏥 *Clínica:* ${lead.clinica || 'Não informada'}\n` +
+            `👥 *Equipe:* ${lead.numProfissionais || '?'} profissional(is)\n` +
+            `💡 *Plano Indicado:* ${lead.planoIndicado || 'A definir'}\n` +
+            `🎯 *Principal Interesse:* ${lead.dorPrincipal || 'Não informado'}\n` +
+            `📱 *Telefone do Lead:* +${finalPhone}\n\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `👇 *CLIQUE PARA CONVERSAR COM O LEAD:*\n` +
+            `${waLink}`
+        } else {
+          specialistText = `🚨 *NOVO LEAD QUALIFICADO NO BOT!* 🚨\n\n` +
+            `👤 *Nome:* ${lead.nome || 'Não informado'}\n` +
+            `🏥 *Clínica:* ${lead.clinica || 'Não informada'}\n` +
+            `👥 *Equipe:* ${lead.numProfissionais || '?'} profissional(is)\n` +
+            `💡 *Plano Indicado:* ${lead.planoIndicado || 'A definir'}\n` +
+            `🎯 *Principal Interesse:* ${lead.dorPrincipal || 'Não informado'}\n` +
+            `📱 *Telefone:* Não identificado (ID Privacidade)\n\n` +
+            `━━━━━━━━━━━━━━━━━━\n` +
+            `⚠️ O lead usou WhatsApp Web com privacidade. Procure a conversa diretamente no WhatsApp do bot (21) 97512-9005.`
+        }
 
         await socket.sendMessage(specialistJid, { text: specialistText })
-        console.log(`[Clin] 📲 Notificação de lead enviada com sucesso para o Especialista (${specialistPhone})`)
+        console.log(`[Clin] 📲 Notificação enviada para Especialista (${specialistPhone}). Telefone final: ${finalPhone || 'NENHUM'}`)
       } catch (specErr: any) {
         console.error(`[Clin] ⚠️ Erro ao enviar notificação para o Especialista:`, specErr?.message || specErr)
       }
