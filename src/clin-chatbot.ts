@@ -259,14 +259,28 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
       history.push({ role: 'assistant', content: msg })
     }
 
-    // Enviar cada mensagem com delay de 1.5s entre elas
+    // Enviar cada mensagem com delay rápido (300ms) entre elas
     for (let i = 0; i < messages.length; i++) {
       if (i > 0) {
-        // Indicar composing entre mensagens
         try { await socket.sendPresenceUpdate('composing', senderJid) } catch { /* */ }
-        await delay(1500)
+        await delay(300)
       }
-      await socket.sendMessage(senderJid, { text: messages[i] })
+
+      try {
+        await socket.sendMessage(senderJid, { text: messages[i] })
+      } catch (sendErr: any) {
+        console.error(`[Clin] ⚠️ Falha ao enviar para JID ${senderJid}:`, sendErr?.message || sendErr)
+        // Fallback: se JID era @lid e falhou, tentar no formato padrão @s.whatsapp.net
+        if (senderJid.endsWith('@lid')) {
+          const fallbackJid = `${senderPhone}@s.whatsapp.net`
+          console.log(`[Clin] 🔄 Tentando fallback para JID: ${fallbackJid}`)
+          try {
+            await socket.sendMessage(fallbackJid, { text: messages[i] })
+          } catch (err2) {
+            console.error(`[Clin] ❌ Falha também no fallback ${fallbackJid}:`, err2)
+          }
+        }
+      }
     }
 
     try { await socket.sendPresenceUpdate('paused', senderJid) } catch { /* */ }
@@ -476,7 +490,13 @@ async function startClinSession() {
 
         if (!text.trim()) continue
 
-        const senderJid = msg.key.remoteJid!
+        let senderJid = msg.key.remoteJid!
+        if (senderJid.endsWith('@lid') && (msg.key as any).remoteJidAlt) {
+          const altJid = (msg.key as any).remoteJidAlt
+          console.log(`[Clin] 🔀 JID @lid ${senderJid} convertido para remoteJidAlt: ${altJid}`)
+          senderJid = altJid
+        }
+
         console.log(`[Clin] 📩 Mensagem de ${senderJid.split('@')[0]}: ${text.substring(0, 50)}`)
 
         try {
