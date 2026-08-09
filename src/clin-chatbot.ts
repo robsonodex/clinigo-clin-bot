@@ -111,7 +111,18 @@ async function downloadAuthFromSupabase(): Promise<boolean> {
 
     if (singleData) {
       const text = Buffer.from(await singleData.arrayBuffer()).toString('utf-8')
-      const parsed = JSON.parse(text, BufferJSON.reviver)
+      const robustReviver = (key: string, value: any) => {
+        if (value && typeof value === 'object' && value.type === 'Buffer') {
+          if (typeof value.data === 'string') {
+            return Buffer.from(value.data, 'base64')
+          }
+          if (Array.isArray(value.data)) {
+            return Buffer.from(value.data)
+          }
+        }
+        return BufferJSON.reviver(key, value)
+      }
+      const parsed = JSON.parse(text, robustReviver)
       if (parsed && parsed.creds) {
         if (parsed.creds.me && parsed.creds.me.id) {
           parsed.creds.registered = true
@@ -141,8 +152,19 @@ async function uploadAuthToSupabase() {
 
     const credsFile = path.join(AUTH_DIR, 'creds.json')
     if (fs.existsSync(credsFile)) {
+      const robustReviver = (key: string, value: any) => {
+        if (value && typeof value === 'object' && value.type === 'Buffer') {
+          if (typeof value.data === 'string') {
+            return Buffer.from(value.data, 'base64')
+          }
+          if (Array.isArray(value.data)) {
+            return Buffer.from(value.data)
+          }
+        }
+        return BufferJSON.reviver(key, value)
+      }
       const credsContent = fs.readFileSync(credsFile, 'utf-8')
-      const credsObj = JSON.parse(credsContent, BufferJSON.reviver)
+      const credsObj = JSON.parse(credsContent, robustReviver)
       if (credsObj && credsObj.me && credsObj.me.id) {
         credsObj.registered = true
       }
