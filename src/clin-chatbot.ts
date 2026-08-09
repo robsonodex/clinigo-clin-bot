@@ -26,6 +26,7 @@ const logger = pino({ level: 'info' }) // INFO para diagnóstico
 
 // ========== CONFIG ==========
 const CLIN_API_URL = process.env.CLIN_API_URL || 'https://clinigo.app/api/chatbot'
+const CLIN_SESSION_ID = process.env.CLIN_SESSION_ID || 'de000000-0000-0000-0000-000000000001'
 const AUTH_DIR = path.join(process.cwd(), '.clin-auth')
 
 // ========== STATE ==========
@@ -62,54 +63,68 @@ async function downloadAuthFromSupabase(): Promise<boolean> {
   if (!supabase) return false
 
   try {
-    // 1. Tentar primeiro o formato single-file (default_auth_info.json)
-    const { data: singleData, error: singleErr } = await supabase.storage
-      .from('whatsapp-sessions')
-      .download('clin-sales-bot/default_auth_info.json')
+    let restoredAny = false
 
-    if (singleData && !singleErr) {
+    if (!fs.existsSync(AUTH_DIR)) {
+      fs.mkdirSync(AUTH_DIR, { recursive: true })
+    }
+
+    // 1. Restaurar pasta multi-file (clin-sales-bot-files) com chaves pre-key/session
+    const { data: files, error } = await supabase.storage
+      .from('whatsapp-sessions')
+      .list('clin-sales-bot-files')
+
+    if (!error && files && files.length > 0) {
+      for (const file of files) {
+        if (file.name.startsWith('.')) continue
+        const { data: fileData, error: downloadErr } = await supabase.storage
+          .from('whatsapp-sessions')
+          .download(`clin-sales-bot-files/${file.name}`)
+
+        if (fileData && !downloadErr) {
+          const buffer = Buffer.from(await fileData.arrayBuffer())
+          fs.writeFileSync(path.join(AUTH_DIR, file.name), buffer)
+        }
+      }
+      console.log(`[Clin] 📥 Credenciais multi-file restauradas do Supabase Storage (${files.length} arquivos)`)
+      restoredAny = true
+    }
+
+    // 2. Restaurar/Garantir creds.json do formato single-file (tentando pasta UUID primeiro, depois clin-sales-bot)
+    let singleData: any = null
+    let singleErr: any = null
+
+    const res1 = await supabase.storage
+      .from('whatsapp-sessions')
+      .download(`${CLIN_SESSION_ID}/default_auth_info.json`)
+    
+    if (res1.data && !res1.error) {
+      singleData = res1.data
+    } else {
+      const res2 = await supabase.storage
+        .from('whatsapp-sessions')
+        .download('clin-sales-bot/default_auth_info.json')
+      singleData = res2.data
+      singleErr = res2.error
+    }
+
+    if (singleData) {
       const text = Buffer.from(await singleData.arrayBuffer()).toString('utf-8')
       const parsed = JSON.parse(text, BufferJSON.reviver)
       if (parsed && parsed.creds) {
         if (parsed.creds.me && parsed.creds.me.id) {
           parsed.creds.registered = true
         }
-        if (!fs.existsSync(AUTH_DIR)) {
-          fs.mkdirSync(AUTH_DIR, { recursive: true })
-        }
         fs.writeFileSync(
           path.join(AUTH_DIR, 'creds.json'),
           JSON.stringify(parsed.creds, BufferJSON.replacer, 2)
         )
         console.log(`[Clin] 📥 Credenciais restauradas do Supabase Storage (default_auth_info.json) | me:`, parsed.creds.me?.id, '| registered:', parsed.creds.registered)
-        return true
+        restoredAny = true
       }
     }
 
-    // 2. Fallback: tentar pasta multi-file (clin-sales-bot-files)
-    const { data: files, error } = await supabase.storage
-      .from('whatsapp-sessions')
-      .list('clin-sales-bot-files')
-
-    if (error || !files || files.length === 0) return false
-
-    if (!fs.existsSync(AUTH_DIR)) {
-      fs.mkdirSync(AUTH_DIR, { recursive: true })
-    }
-
-    for (const file of files) {
-      if (file.name.startsWith('.')) continue
-      const { data: fileData, error: downloadErr } = await supabase.storage
-        .from('whatsapp-sessions')
-        .download(`clin-sales-bot-files/${file.name}`)
-
-      if (fileData && !downloadErr) {
-        const buffer = Buffer.from(await fileData.arrayBuffer())
-        fs.writeFileSync(path.join(AUTH_DIR, file.name), buffer)
-      }
-    }
-    console.log(`[Clin] 📥 Credenciais multi-file restauradas do Supabase Storage (${files.length} arquivos)`)
-    return true
+    return restoredAny
   } catch (err: any) {
     console.error(`[Clin] Erro ao baixar credenciais do Supabase:`, err.message)
     return false
@@ -131,13 +146,23 @@ async function uploadAuthToSupabase() {
         credsObj.registered = true
       }
       const singlePayload = JSON.stringify({ creds: credsObj, keys: {} }, BufferJSON.replacer)
+      const payloadBuffer = Buffer.from(singlePayload)
 
-      await supabase.storage
-        .from('whatsapp-sessions')
-        .upload('clin-sales-bot/default_auth_info.json', Buffer.from(singlePayload), {
-          contentType: 'application/json',
-          upsert: true
-        })
+      // Upload para ambas as rotas de compatibilidade (UUID e nome)
+      await Promise.all([
+        supabase.storage
+          .from('whatsapp-sessions')
+          .upload(`${CLIN_SESSION_ID}/default_auth_info.json`, payloadBuffer, {
+            contentType: 'application/json',
+            upsert: true
+          }),
+        supabase.storage
+          .from('whatsapp-sessions')
+          .upload('clin-sales-bot/default_auth_info.json', payloadBuffer, {
+            contentType: 'application/json',
+            upsert: true
+          })
+      ])
     }
 
     const files = fs.readdirSync(AUTH_DIR)
@@ -494,7 +519,8 @@ async function startClinSession() {
         if (supabase) {
           try {
             await supabase.from('whatsapp_sessions').upsert({
-              clinic_id: 'clin-sales-bot',
+              clinic_id: CLIN_SESSION_ID,
+              sector: 'default',
               instance_name: 'clin-railway',
               status: 'connected',
               phone_number: clinPhoneNumber,
@@ -546,7 +572,7 @@ async function startClinSession() {
                 qr_code: null,
                 phone_number: null,
                 updated_at: new Date().toISOString(),
-              }).eq('clinic_id', 'clin-sales-bot')
+              }).eq('clinic_id', CLIN_SESSION_ID)
             } catch { /* best effort */ }
           }
 
