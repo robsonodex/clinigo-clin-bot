@@ -471,9 +471,6 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
           rawPhone = `55${rawPhone}`
         }
 
-        // Validar se o telefone com 55 é válido (12 ou 13 dígitos no Brasil)
-        const isValidPhone = rawPhone.length >= 12 && rawPhone.length <= 13
-
         const specialistPhone = process.env.SPECIALIST_PHONE || '5521965532247'
         const specialistJid = `${specialistPhone}@s.whatsapp.net`
 
@@ -481,16 +478,8 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
           `Olá ${lead.nome || ''}! Sou o especialista do CliniGo. Vi que você cadastrou a clínica ${lead.clinica || ''}. Como posso te ajudar?`
         )
 
-        let waLink = ''
-        let phoneDisplay = ''
-
-        if (isValidPhone) {
-          waLink = `https://wa.me/${rawPhone}?text=${prefilledMsg}`
-          phoneDisplay = `+${rawPhone}`
-        } else {
-          waLink = `https://wa.me/5521975129005`
-          phoneDisplay = `Contato via WhatsApp Web / ID Privacidade (${senderPhone})`
-        }
+        const waLink = `https://wa.me/${rawPhone}?text=${prefilledMsg}`
+        const phoneDisplay = `+${rawPhone}`
 
         const specialistText = `🚨 *NOVO LEAD QUALIFICADO NO BOT!* 🚨\n\n` +
           `👤 *Nome:* ${lead.nome || 'Não informado'}\n` +
@@ -500,9 +489,8 @@ async function handleIncomingMessage(socket: WASocket, senderJid: string, text: 
           `🎯 *Principal Interesse:* ${lead.dorPrincipal || 'Não informado'}\n` +
           `📱 *Telefone do Lead:* ${phoneDisplay}\n\n` +
           `━━━━━━━━━━━━━━━━━━\n` +
-          (isValidPhone 
-            ? `👇 *CLIQUE NO LINK ABAIXO PARA INICIAR A CONVERSA:* \n${waLink}`
-            : `👇 *ABRA A CONVERSA DIRETA NO WHATSAPP DO BOT (21 97512-9005):* \n${waLink}`)
+          `👇 *CLIQUE NO LINK ABAIXO PARA INICIAR A CONVERSA COM O LEAD:* \n` +
+          `${waLink}`
 
         await socket.sendMessage(specialistJid, { text: specialistText })
         console.log(`[Clin] 📲 Notificação de lead enviada com sucesso para o Especialista (${specialistPhone})`)
