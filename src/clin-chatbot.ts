@@ -71,6 +71,9 @@ async function downloadAuthFromSupabase(): Promise<boolean> {
       const text = Buffer.from(await singleData.arrayBuffer()).toString('utf-8')
       const parsed = JSON.parse(text, BufferJSON.reviver)
       if (parsed && parsed.creds) {
+        if (parsed.creds.me && parsed.creds.me.id) {
+          parsed.creds.registered = true
+        }
         if (!fs.existsSync(AUTH_DIR)) {
           fs.mkdirSync(AUTH_DIR, { recursive: true })
         }
@@ -78,7 +81,7 @@ async function downloadAuthFromSupabase(): Promise<boolean> {
           path.join(AUTH_DIR, 'creds.json'),
           JSON.stringify(parsed.creds, BufferJSON.replacer, 2)
         )
-        console.log(`[Clin] 📥 Credenciais restauradas do Supabase Storage (default_auth_info.json) | me:`, parsed.creds.me?.id)
+        console.log(`[Clin] 📥 Credenciais restauradas do Supabase Storage (default_auth_info.json) | me:`, parsed.creds.me?.id, '| registered:', parsed.creds.registered)
         return true
       }
     }
@@ -124,6 +127,9 @@ async function uploadAuthToSupabase() {
     if (fs.existsSync(credsFile)) {
       const credsContent = fs.readFileSync(credsFile, 'utf-8')
       const credsObj = JSON.parse(credsContent, BufferJSON.reviver)
+      if (credsObj && credsObj.me && credsObj.me.id) {
+        credsObj.registered = true
+      }
       const singlePayload = JSON.stringify({ creds: credsObj, keys: {} }, BufferJSON.replacer)
 
       await supabase.storage
@@ -438,6 +444,9 @@ async function startClinSession() {
 
   try {
     const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR)
+    if (state.creds.me && state.creds.me.id) {
+      state.creds.registered = true
+    }
     const { version } = await fetchLatestBaileysVersion()
     console.log(`[Clin] 📡 Baileys v${version.join('.')} — iniciando sessão...`)
 
